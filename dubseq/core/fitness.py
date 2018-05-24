@@ -8,7 +8,7 @@ from scipy import stats
 from scipy import sparse
 from scipy.stats import poisson
 from scipy.optimize import nnls
-from statistics import median
+from limix.stats import qvalues
 from sklearn.linear_model import ElasticNet
 from sklearn.linear_model import Lasso
 from sklearn.linear_model import Ridge
@@ -99,8 +99,6 @@ class BarseqLayout:
     def __to_items(self, df):
         items = []
         for _, row in df.iterrows():
-            # print(row['name'])
-            # items.append(BarseqLayoutItem(row.itnum, row.type, row.name))
             items.append(BarseqLayoutItem(row.itnum, row.type, row['name']))
         return items
 
@@ -285,11 +283,11 @@ class Fitness:
     GENES = []
     GENOME_SEGMENTS = []
     RIDGE_PARAM_ALPHA = 1
-
     LASSO_PARAM_ALPHA = 1
-
     ELASTIC_NET_PARAM_ALPHA = 1
     ELASTIC_NET_PARAM_L1_RATIO = 0.5
+
+    GSCORE_VARIENCE_ALPHA = 0.02
 
     #######################
     # Init
@@ -302,7 +300,10 @@ class Fitness:
         t0Indeces = Fitness.getTimeZeroIndeces()
 
         # Load data
+        print("loadBPAG:...",  end='', flush=True)
         Fitness.loadBPAG(bpag_fname)
+        print('Done!')
+
         Fitness.loadCounts()
         Fitness.buildREF_TIME0(t0Indeces)
         Fitness.cleanBARCODE_COUNTS(t0Indeces)
@@ -491,13 +492,39 @@ class Fitness:
 
                 f.write('\t'.join(str(x) for x in vals) + '\n')
 
+    @staticmethod
+    def save_gstat(fname, gstats):
+        with open(fname, 'w') as f:
+            column_names = ['index',
+                            'gene_name',
+                            'locus_tag',
+                            'score_type',
+                            'score',
+                            'gscore_bootstrap_avg',
+                            'gscore_bootstrap_var',
+                            'gscore_poisson_avg',
+                            'gscore_poisson_var',
+                            'gscore_var',
+                            'fcount',
+                            'gscore_var_moderated',
+                            'tscore',
+                            'pvalue',
+                            'qvalue',
+                            'set_qvalue']
+            f.write('\t'.join(column_names) + '\n')
+            for index, gstat in enumerate(gstats):
+                vals = []
+                vals.append(index)
+                for key in column_names[1:]:
+                    vals.append(gstat[key])
+                f.write('\t'.join(str(x) for x in vals) + '\n')
+
     #######################
     # Loaders
     #######################
 
     @staticmethod
     def loadBPAG(bpag_fname):
-        print("loadBPAG:...",  end='', flush=True)
         del Fitness.BARCODE_COUNTS[:]
         df = pd.read_csv(bpag_fname, sep='\t')
 
@@ -515,25 +542,7 @@ class Fitness:
                 "time0": 0,
                 "counts": [0] * len(Fitness.CONDITIONS)
             })
-
-            # with open(bpag_fname, 'r') as f:
-            #     for line in f:
-            #         vals = line.split("\t")
-            #         barcodes = vals[0].split("=")
-            #         barcode = barcodes[1]
-            #         Fitness.BARCODE_COUNTS.append({
-            #             'pairBarcodeUp': barcodes[0],
-            #             'pairBarcodeDn': barcodes[1],
-
-            #             "barcode": barcode,
-            #             "contigId": vals[3],
-            #             "posFrom": int(vals[4]),
-            #             "posTo": int(vals[5]),
-            #             "time0": 0,
-            #             "counts": [0] * len(Fitness.CONDITIONS)
-            #         })
         Fitness.updateBARCODE_INDICES()
-        print("Done!")
 
     @staticmethod
     def updateBARCODE_INDICES():
@@ -544,14 +553,12 @@ class Fitness:
             Fitness.BARCODE_2_INDEX[br['barcode']] = index
             Fitness.BARCODE_INDICES.append(index)
             Fitness.BARCODE_REPLICATES.append(1)
-    #     print "\t from updateBARCODE_INDICES", len(BARCODE_2_INDEX), len(BARCODE_INDICES), len(BARCODE_REPLICATES)
 
     @staticmethod
     def loadCounts():
-        print("loadCounts:...", end='', flush=True)
         for itnum in Fitness.CONDITIONS:
             it = Fitness.CONDITIONS[itnum]
-            print('Doing file: ', it['file'])
+            print('\t loading: ', it['file'])
             df = pd.read_csv(it['file'], sep='\t')
             for _, row in df.iterrows():
                 if row.sim_recommended != '+':
@@ -562,17 +569,6 @@ class Fitness:
                     barcodeIndex = Fitness.BARCODE_2_INDEX[barcode]
                     itIndex = it['index']
                     Fitness.BARCODE_COUNTS[barcodeIndex]['counts'][itIndex] = count
-
-            # with open(it['file'], 'r') as f:
-            #     for line in f:
-            #         vals = line.split('\t')
-            #         barcode = vals[0]
-            #         count = int(vals[1])
-            #         if barcode in Fitness.BARCODE_2_INDEX:
-            #             barcodeIndex = Fitness.BARCODE_2_INDEX[barcode]
-            #             itIndex = it['index']
-            #             Fitness.BARCODE_COUNTS[barcodeIndex]['counts'][itIndex] = count
-        print("Done!")
 
     @staticmethod
     def cleanBARCODE_COUNTS(time0Indeces):
@@ -590,10 +586,6 @@ class Fitness:
                 delCount += 1
 
         Fitness.updateBARCODE_INDICES()
-        # print "\tLen before = ", len0
-        # print "\tLen after = ", len(BARCODE_COUNTS)
-        # print "\tDel count = ", delCount
-        # print "cleanBARCODE_COUNTS: Done!"
 
     @staticmethod
     def loadGenes(genes_gff_fname):
@@ -719,7 +711,6 @@ class Fitness:
                     })
 
         Fitness.GENES.sort(key=lambda x: x['posFrom'], reverse=False)
-        print('Load genes: Done!')
 
     @staticmethod
     def _loadGenes(genes_gff_fname):
@@ -792,14 +783,11 @@ class Fitness:
 
     @staticmethod
     def associateGenesWithBarcodes():
-        print("associateGenesWithBarcodes:...", end='', flush=True)
         for bIndex, bcode in enumerate(Fitness.BARCODE_COUNTS):
             for gene in Fitness.GENES:
                 if bcode['contigId'] == gene['contigId']:
                     if bcode['posFrom'] <= gene['posFrom'] and bcode['posTo'] >= gene['posTo']:
                         gene['barcodeIndeces'].append(bIndex)
-
-        print("Done!")
 
     # Delete genes that do not have associated barcodes
     @staticmethod
@@ -817,7 +805,6 @@ class Fitness:
     #######################
     @staticmethod
     def buildGENOME_SEGMENTS():
-        print("buildGENOME_SEGMENTS:... ", end='', flush=True)
         del Fitness.GENOME_SEGMENTS[:]
 
         prevGene = None
@@ -845,11 +832,9 @@ class Fitness:
             Fitness.GENOME_SEGMENTS.append({
                 'geneIndeces': geneIndeces
             })
-        print('Done!')
 
     @staticmethod
     def buildREF_TIME0(time0Indeces):
-        print("buildREF_TIME0:...", end='', flush=True)
         for bIndex in Fitness.BARCODE_INDICES:
             row = Fitness.BARCODE_COUNTS[bIndex]
             counts = row['counts']
@@ -857,7 +842,6 @@ class Fitness:
             for t0Index in time0Indeces:
                 total += counts[t0Index]
             Fitness.BARCODE_COUNTS[bIndex]['time0'] = total
-        print("Done!")
 
     # No needs to adjust by total...
     @staticmethod
@@ -871,7 +855,7 @@ class Fitness:
             score = (s + 1.0) / (t + 1.0) * stotalT0 / stotal
             scores.append(score)
         # normalize by median
-        scoreMedian = median(scores)
+        scoreMedian = np.median(scores)
         for index, val in enumerate(scores):
             scores[index] = math.log(val * 1.0 / scoreMedian, 2)
 
@@ -896,11 +880,6 @@ class Fitness:
             b_index_offsets[b_index] = len(reg_f_scores)
             for i in range(Fitness.BARCODE_REPLICATES[b_index]):
                 reg_f_scores.append(fscores[b_index])
-                # reg_f_indices.append(b_index)
-
-        # # build a subset of barcode (fragemtn) scores corresponding to bIndeces
-        # for f_index in reg_f_indices:
-        #     reg_f_scores.append(fscores[f_index])
 
         # build matrix of presence/absence
         for g_index, gene in enumerate(Fitness.GENES):
@@ -976,7 +955,7 @@ class Fitness:
 
     @staticmethod
     def build_gscores(fscores, score_type):
-        print('\t doing: ' + Fitness.SCORE_TYPE_NAMES[score_type])
+        # print('\t doing: ' + Fitness.SCORE_TYPE_NAMES[score_type])
         gscores = [0] * len(Fitness.GENES)
 
         if Fitness.SPARSE_REGRESSION_MATRIX[score_type]:
@@ -996,8 +975,6 @@ class Fitness:
                 estimator = ElasticNet(
                     alpha=alpha, l1_ratio=l1_ratio, fit_intercept=False)
 
-            print('\t\t', reg_fg_matrix.shape, reg_f_scores.shape)
-            print('\t\t estimator:', estimator)
             estimator.fit(reg_fg_matrix, reg_f_scores)
             for i, gscore in enumerate(estimator.coef_):
                 gscores[i] = gscore
@@ -1084,10 +1061,10 @@ class Fitness:
     @staticmethod
     def build_noised_gscores(n_cycles, sample, score_type, do_bootstrap_indices, do_bootstrap_read_counts, do_poisson_noise, fl_noise_t0):
 
-        gene_scores = [] * len(Fitness.GENES)
+        gene_scores = [None] * len(Fitness.GENES)
 
         # init geneScores array
-        for i in range(gene_scores):
+        for i in range(len(gene_scores)):
             gene_scores[i] = [0] * n_cycles
 
         for cycle_index in range(n_cycles):
@@ -1129,76 +1106,211 @@ class Fitness:
             gs.sort()
         return gene_scores
 
+    #     nCycles = 100
+    #     Fitness.cleanGeneScores()
+    #     sample = Fitness.get_sample(sampleIndex)
+
+    #     fs = Fitness.build_fscores(sample, Fitness.get_tzero_sample())
+    #     gs = Fitness.build_gscores(fs, scoreType)
+
+    #     if doNoise:
+    #         gscoresBI = Fitness.build_noised_gscores(nCycles, sample,  doBootstrapIndeces=True,
+    #                                                   doBootstrapReadCounts=False, doPoissonNoise=False, flNoiseT0=False)
+    #         gscoresPN = Fitness.build_noised_gscores(nCycles, sample,  doBootstrapIndeces=False,
+    #                                                   doBootstrapReadCounts=False, doPoissonNoise=True, flNoiseT0=False)
+    #     else:
+    #         gscoresBI = [[0] * nCycles] * len(gs)
+    #         gscoresPN = [[0] * nCycles] * len(gs)
+
+    #     updateGENE_scores(gs, gscoresBI, gscoresPN, sample)
+    #     buildStat()
     @staticmethod
-    def updateGENE_scores(gs, gscoresBI, gscoresPN, sample):
-        for index, gene in enumerate(Fitness.GENES):
-            gene['score'] = gs[index]
-            gene['Mb'] = np.mean(gscoresBI[index])
-            gene['Vb'] = np.var(gscoresBI[index])
-            gene['Mp'] = np.mean(gscoresPN[index])
-            gene['Vp'] = np.var(gscoresPN[index])
-            gene['V'] = max(gene['Vb'], gene['Vp'])
-            gene['n'] = len(gene['barcodeIndeces'])
-            gene['barcodeCounts'] = []
-            for bIndex in gene['barcodeIndeces']:
-                gene['barcodeCounts'].append(sample[bIndex])
+    def build_gstat(sample_index, score_type):
+
+        N_CYCLES = 100
+        MIN_VAR_EFF_FCOUNT = 5
+
+        gstats = []
+
+        ss = Fitness.get_sample(sample_index)
+        ts = Fitness.get_tzero_sample()
+        fs = Fitness.build_fscores(ss, ts)
+        gs = Fitness.build_gscores(fs, score_type)
+
+        print('\tBootstrap fragments:')
+        gs_bootstrap = Fitness.build_noised_gscores(N_CYCLES, ss, score_type,
+                                                    do_bootstrap_indices=True,
+                                                    do_bootstrap_read_counts=False,
+                                                    do_poisson_noise=False,
+                                                    fl_noise_t0=False)
+
+        print('\tPoisson noise:')
+        gs_poisson = Fitness.build_noised_gscores(N_CYCLES, ss, score_type,
+                                                  do_bootstrap_indices=False,
+                                                  do_bootstrap_read_counts=False,
+                                                  do_poisson_noise=True,
+                                                  fl_noise_t0=False)
+
+        # Do first pass and collect basic stat
+        for i, gene in enumerate(Fitness.GENES):
+
+            gstat = {}
+
+            gstat['gene_name'] = gene['name']
+            gstat['locus_tag'] = gene['locusTag']
+            gstat['score_type'] = Fitness.SCORE_TYPE_NAMES[score_type]
+            gstat['score'] = gs[i]
+
+            gstat['gscore_bootstrap_avg'] = np.mean(gs_bootstrap[i])
+            gstat['gscore_bootstrap_var'] = np.var(gs_bootstrap[i])
+
+            gstat['gscore_poisson_avg'] = np.mean(gs_poisson[i])
+            gstat['gscore_poisson_var'] = np.var(gs_poisson[i])
+
+            gstat['gscore_var'] = max(
+                gstat['gscore_bootstrap_var'], gstat['gscore_poisson_var'])
+            gstat['fcount'] = len(gene['barcodeIndeces'])
+            gstat['gscore_var_moderated'] = np.nan
+            gstat['tscore'] = np.nan
+            gstat['pvalue'] = np.nan
+            gstat['qvalue'] = np.nan
+            gstat['set_qvalue'] = np.nan
+            # gstat['fread_counts'] = []
+            # for b_index in gene['barcodeIndeces']:
+            #     gstat['fread_counts'].append(ss[b_index])
+
+            gstats.append(gstat)
+
+        # Effective variance - calculated only across "well-defined" genes: genes covered by > 5 fragments
+        # with score > 0
+        gscore_var_effs = []
+        for i, gstat in enumerate(gstats):
+            if gstat['fcount'] > MIN_VAR_EFF_FCOUNT and np.abs(gs[i]) > 0:
+                gscore_var_effs.append(gstat['gscore_var'])
+        gscore_var_eff = np.mean(gscore_var_effs)
+
+        # Do second pass and calculate tscore and pvalue
+        pvalues = []
+        pvalue_gis = []
+        for i, gstat in enumerate(gstats):
+            if gstat['fcount'] > 0:
+                gstat['gscore_var_moderated'] = (
+                    (gstat['fcount'] - 1) * gstat['gscore_var'] + gscore_var_eff) / gstat['fcount']
+                gstat['tscore'] = gs[i] / \
+                    np.sqrt(gstat['gscore_var_moderated'] +
+                            Fitness.GSCORE_VARIENCE_ALPHA)
+                gstat['pvalue'] = stats.t.sf(
+                    np.abs(gstat['tscore']), gstat['fcount'] - 1) * 2
+
+                if gstat['tscore'] != 0 and gstat['fcount'] > 1:
+                    pvalues.append(gstat['pvalue'])
+                    pvalue_gis.append(i)
+            # else:
+            #     gstat['gscore_var_moderated'] = 0
+            #     gstat['tscore'] = 0
+            #     gstat['pvalue'] = 1
+
+        # Calculate qvalues
+        pvalues = np.array(pvalues)
+        qvals, pi0 = qvalues(pvalues, return_pi0=True)
+        for i, qvalue in enumerate(qvals):
+            g_index = pvalue_gis[i]
+            gstats[g_index]['qvalue'] = qvalue
+
+        return (gstats, gscore_var_eff, pi0)
 
     @staticmethod
-    def buildStat():
-        # Effective variance estimated from median
-        Veffm = 0
+    def calculate_set_qvalues(gstats_set):
+        pvalues = []
+        gstat_set_indices = []
+        gstat_gene_indices = []
+        for gstat_index, gstats in enumerate(gstats_set):
+            for gene_index, gstat in enumerate(gstats):
+                if gstat['tscore'] != 0 and gstat['fcount'] > 1:
+                    pvalues.append(gstat['pvalue'])
+                    gstat_set_indices.append(gstat_index)
+                    gstat_gene_indices.append(gene_index)
 
-        # Effective variance estimated from weighted averaged
-        Veffa = 0
-        barcodeCount = 0
-        geneTotal = 0
-        nTotal = 0
-        VList = []
+        pvalues = np.array(pvalues)
+        qvals, pi0 = qvalues(pvalues, return_pi0=True)
+        for i, qvalue in enumerate(qvals):
+            gstat_index = gstat_set_indices[i]
+            gene_index = gstat_gene_indices[i]
+            gstats_set[gstat_index][gene_index]['set_qvalue'] = qvalue
 
-        for index, gene in enumerate(Fitness.GENES):
-            if gene['n'] > 3 and gene['score'] > 0:
-                VList.append(gene['V'])
-                nTotal += gene['n']
-                Veffa += gene['V'] * gene['n']
-                geneTotal += 1
-                barcodeCount += np.average(gene['barcodeCounts'])
+        return (gstats_set, pi0)
 
-        # from average
-        Veffa /= nTotal
-        barcodeCount /= geneTotal
+    # @staticmethod
+    # def updateGENE_scores(gs, gscoresBI, gscoresPN, sample):
+    #     for index, gene in enumerate(Fitness.GENES):
+    #         gene['score'] = gs[index]
+    #         gene['Mb'] = np.mean(gscoresBI[index])
+    #         gene['Vb'] = np.var(gscoresBI[index])
+    #         gene['Mp'] = np.mean(gscoresPN[index])
+    #         gene['Vp'] = np.var(gscoresPN[index])
 
-        # from median
-        VList.sort()
-        Veffm = np.median(VList)
+    #         gene['V'] = max(gene['Vb'], gene['Vp'])
+    #         gene['n'] = len(gene['barcodeIndeces'])
+    #         gene['barcodeCounts'] = []
+    #         for bIndex in gene['barcodeIndeces']:
+    #             gene['barcodeCounts'].append(sample[bIndex])
 
-        # calculate tscore and pvalue
-        alpha = 0.1
-        for index, gene in enumerate(Fitness.GENES):
-            if gene['n'] > 0:
-                gene['avg_barcodeCount'] = barcodeCount
-                gene['Veffa'] = Veffa
-                gene['Vm'] = ((gene['n'] - 1) * gene['V'] + Veffa) / gene['n']
-                gene['tscore'] = gene['score'] / math.sqrt(gene['Vm'] + alpha)
-                gene['pvalue'] = stats.t.sf(gene['tscore'], gene['n'] - 1)
-            else:
-                gene['Vm'] = 0
-                gene['tscore'] = 0
-                gene['pvalue'] = 1
+    # @staticmethod
+    # def buildStat():
+    #     # Effective variance estimated from median
+    #     Veffm = 0
 
-    @staticmethod
-    def cleanGeneScores():
-        for gene in Fitness.GENES:
-            gene['score'] = 0
-            gene['Mb'] = 0
-            gene['Vb'] = 0
-            gene['Mp'] = 0
-            gene['Vp'] = 0
-            gene['V'] = 0
-            gene['n'] = 0
-            gene['Vm'] = 0
-            gene['tscore'] = 0
-            gene['pvalue'] = 0
-            gene['barcodeCounts'] = []
+    #     # Effective variance estimated from weighted averaged
+    #     Veffa = 0
+    #     barcodeCount = 0
+    #     geneTotal = 0
+    #     nTotal = 0
+    #     VList = []
+
+    #     for index, gene in enumerate(Fitness.GENES):
+    #         if gene['n'] > 3 and gene['score'] > 0:
+    #             VList.append(gene['V'])
+    #             nTotal += gene['n']
+    #             Veffa += gene['V'] * gene['n']
+    #             geneTotal += 1
+    #             barcodeCount += np.average(gene['barcodeCounts'])
+
+    #     # from average
+    #     Veffa /= nTotal
+    #     barcodeCount /= geneTotal
+
+    #     # from median
+    #     VList.sort()
+    #     Veffm = np.median(VList)
+
+    #     # calculate tscore and pvalue
+    #     alpha = 0.1
+    #     for index, gene in enumerate(Fitness.GENES):
+    #         if gene['n'] > 0:
+    #             gene['avg_barcodeCount'] = barcodeCount
+    #             gene['Veffa'] = Veffa
+    #             gene['Vm'] = ((gene['n'] - 1) * gene['V'] + Veffa) / gene['n']
+    #             gene['tscore'] = gene['score'] / math.sqrt(gene['Vm'] + alpha)
+    #             gene['pvalue'] = stats.t.sf(gene['tscore'], gene['n'] - 1)
+    #         else:
+    #             gene['Vm'] = 0
+    #             gene['tscore'] = 0
+    #             gene['pvalue'] = 1
+
+    # @staticmethod
+    # def cleanGeneScores():
+    #     for gene in Fitness.GENES:
+    #         gene['score'] = 0
+    #         gene['Mb'] = 0
+    #         gene['Vb'] = 0
+    #         gene['Mp'] = 0
+    #         gene['Vp'] = 0
+    #         gene['V'] = 0
+    #         gene['n'] = 0
+    #         gene['Vm'] = 0
+    #         gene['tscore'] = 0
+    #         gene['pvalue'] = 0
+    #         gene['barcodeCounts'] = []
 
     # @staticmethod
     # def doAll(expId, doNoise=True):
@@ -1522,3 +1634,30 @@ class Fitness:
         #                 'index': 0,
         #                 'barcodeIndeces': []
         #             })
+
+        # with open(it['file'], 'r') as f:
+        #     for line in f:
+        #         vals = line.split('\t')
+        #         barcode = vals[0]
+        #         count = int(vals[1])
+        #         if barcode in Fitness.BARCODE_2_INDEX:
+        #             barcodeIndex = Fitness.BARCODE_2_INDEX[barcode]
+        #             itIndex = it['index']
+        #             Fitness.BARCODE_COUNTS[barcodeIndex]['counts'][itIndex] = count
+
+        # with open(bpag_fname, 'r') as f:
+        #     for line in f:
+        #         vals = line.split("\t")
+        #         barcodes = vals[0].split("=")
+        #         barcode = barcodes[1]
+        #         Fitness.BARCODE_COUNTS.append({
+        #             'pairBarcodeUp': barcodes[0],
+        #             'pairBarcodeDn': barcodes[1],
+
+        #             "barcode": barcode,
+        #             "contigId": vals[3],
+        #             "posFrom": int(vals[4]),
+        #             "posTo": int(vals[5]),
+        #             "time0": 0,
+        #             "counts": [0] * len(Fitness.CONDITIONS)
+        #         })

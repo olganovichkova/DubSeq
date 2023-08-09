@@ -13,7 +13,7 @@ class Context:
     BARCODES_FNAME_SUFFIX = '.barcodes'
     BARCODE_STAT_FNAME_SUFFIX = '.bstat.tsv'
     LOG_FILE_NAME = 'barseq.log'
-    ITNUM_PATTERN = re.compile('_(IT\d+)_')
+    ITNUM_PATTERN = re.compile(r'(?:^|_)(IT\d+)[_\.]_')
 
     fastq_source = None
     output_dir = None

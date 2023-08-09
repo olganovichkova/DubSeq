@@ -95,7 +95,7 @@ def parse_args():
 
     parser = argparse.ArgumentParser(
         description='''
-        The narseq program processes the results of BarSeq assays to extract the 
+        The barseq program processes the results of BarSeq assays to extract the 
         up barcodes and caluclate the number of reads supporting each barcode.
 
         The expected structure of a sequence read:

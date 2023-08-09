@@ -286,7 +286,8 @@ def process_fastq_file(fastq_fname):
 
 
 def get_file_itnum(fastq_fname):
-    return Context.ITNUM_PATTERN.findall(fastq_fname)[0]
+    base_file_name = os.path.basename(fastq_fname)
+    return Context.ITNUM_PATTERN.findall(base_file_name)[0]
 
 
 def check_index2(itnum, fastq_record, index2_seq):

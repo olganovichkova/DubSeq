@@ -13,7 +13,8 @@ class Context:
     BARCODES_FNAME_SUFFIX = '.barcodes'
     BARCODE_STAT_FNAME_SUFFIX = '.bstat.tsv'
     LOG_FILE_NAME = 'barseq.log'
-    ITNUM_PATTERN = re.compile(r'(?:^|_)(IT\d+)[_\.]_')
+    ITNUM_PATTERN = re.compile(r'(?:^|_)(IT\d+)[_\.]')
+    SNUM_PATTERN = re.compile(r'(?:^|_)(S\d+)[_\.]')
 
     fastq_source = None
     output_dir = None
@@ -49,11 +50,11 @@ class Context:
             pre_pos = 11
             position_shifts = [0, 1, 2, 3]
             mode = 'n25'
-        elif args.bs3:
+        elif args.bs4:
             # 16:19
             pre_pos = 16
-            position_shifts = [0, 1, 2, 3]
-            mode = 'bs3'
+            position_shifts = [0, 1, 2, 3, 4, 5]
+            mode = 'bs4'
         else:
             pre_pos = args.pos1
             pre_seaquence = args.sequence1
@@ -72,7 +73,7 @@ class Context:
         Context.min_barcode_quality = args.min_barcode_quality
         Context.sim_ratio_threshold = args.sim_ratio_threshold
 
-        if mode == 'bs3':
+        if mode == 'bs4':
             Context.index2_file_name = args.index2_file_name
             Context.index2_df = pd.read_csv(Context.index2_file_name, sep='\t')
 
@@ -109,7 +110,7 @@ def parse_args():
         There are two predefined modes for newer multiplexing designs:
         1. n25 mode (--n25) means 11:14 nt before the pre-sequence, corresponding to a read with
 	            2:5 Ns, GTCGACCTGCAGCGTACG, N20, AGAGACC
-        2. bs3 mode (--bs3) eans 1:4 + 6 + 11 = 18:21 nt before the pre-sequence, corresponding to
+        2. bs4 mode (--bs4) eans 1:4 + 6 + 11 = 18:21 nt before the pre-sequence, corresponding to
 	            1:4 Ns, index2, GTCGACCTGCAGCGTACG, N20, AGAGACC
 
         All extracted barcodes are filtered by the quality of their sequences controlled
@@ -164,8 +165,8 @@ def parse_args():
 	                            2:5 Ns, GTCGACCTGCAGCGTACG, N20, AGAGACC ''',
                         action='store_true')
 
-    parser.add_argument('--bs3',
-                        dest='bs3',
+    parser.add_argument('--bs4',
+                        dest='bs4',
                         help=''' means 1:4 + 6 + 9 = 16:19 nt before the pre-sequence, corresponding to
 	                        1:4 Ns, index2, GTCGACCTGCAGCGTACG, N20, AGAGACC 
                             The file describing index2 sequences should be specified
@@ -289,10 +290,14 @@ def get_file_itnum(fastq_fname):
     base_file_name = os.path.basename(fastq_fname)
     return Context.ITNUM_PATTERN.findall(base_file_name)[0]
 
+def get_file_snum(fastq_fname):
+    base_file_name = os.path.basename(fastq_fname)
+    return Context.SNUM_PATTERN.findall(base_file_name)[0]
 
-def check_index2(itnum, fastq_record, index2_seq):
-    upstream_sequence = fastq_record.sequence[:4 + len(index2_seq)]
-    return index2_seq in upstream_sequence
+
+def check_index2(fastq_record, index2_seq, index2_nN):
+    upstream_sequence = fastq_record.sequence[index2_nN:index2_nN + len(index2_seq)]
+    return index2_seq == upstream_sequence
 
 
 def extract_barcodes(fastq_fname, barcode_stats, fastq_file_stat):
@@ -303,11 +308,12 @@ def extract_barcodes(fastq_fname, barcode_stats, fastq_file_stat):
         3. store the high quality barcode in barcode_stats for the downstream analysis
     '''
 
-    if Context.mode == 'bs3':
-        itnum = get_file_itnum(fastq_fname)
+    if Context.mode == 'bs4':
+        snum = get_file_snum(fastq_fname)
         df = Context.index2_df
-        df = df[df.index_name == itnum]
+        df = df[df.index_name == snum]
         index2_seq = df.iloc[0].index2
+        index2_nN = int(df.iloc[0].nN)
 
     # open a file to accumulate extracted barcodes
     barcodes_fp = open(Context.barcodes_fname(fastq_fname), 'w')
@@ -323,17 +329,21 @@ def extract_barcodes(fastq_fname, barcode_stats, fastq_file_stat):
                 # count the total amount of the processed reads
                 fastq_file_stat.total_reads_inc()
 
+
                 # try to extract a barcode from the sequence
                 barcode = Context.barcode_tag.extract_barcode(
                     record, Context.primer_position_shifts, require_entire_primer2=False)
 
-                has_index2 = True
+                
                 if barcode:
                     # count the reads with extracted barcodes
                     fastq_file_stat.barcode_extracted_reads_inc()
 
-                    if Context.mode == 'bs3':
-                        has_index2 = check_index2(itnum, record, index2_seq)
+  
+
+                has_index2= True
+                if Context.mode == 'bs4':
+                    has_index2 = check_index2(record, index2_seq, index2_nN)
 
                     # store the extracted barcode
                     record_id = record.id.split(' ')[0]

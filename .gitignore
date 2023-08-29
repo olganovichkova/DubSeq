@@ -99,3 +99,7 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+
+# template config
+cfg/_bobaseq_template_cfg.json

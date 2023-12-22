@@ -86,7 +86,7 @@ class Bobaseq:
     def create_cfg_file(self, bobaseq_data_dir):
 
         # Reads the JSON from the bobaseq template config file
-        cfg_template_filename = find_cfg_file('bobaseq_template_cfg.json', './')
+        cfg_template_filename = find_cfg_file('_bobaseq_template_cfg.json', './cfg')
         with open(cfg_template_filename) as f:
             cfg_json = json.load(f)
 
@@ -114,6 +114,6 @@ class Bobaseq:
         subprocess.call(["ls", "-l"])
 
 bs = Bobaseq()
-bs.create_cfg_file("./../data/bobaseq")
-bs.run_bobaseq_pipeline("/home/olga/Development/boba-seq/Boba-seq/src/run_steps.py", "/home/olga/Development/dubseq/DubSeq/data/bobaseq")
-bs.generate_bpag_file("./../data/bobaseq")
+bs.create_cfg_file("./../data/bobaseq_1")
+bs.run_bobaseq_pipeline("/home/olga/Development/boba-seq/Boba-seq/src/run_steps.py", "/home/olga/Development/dubseq/DubSeq/data/bobaseq_1")
+bs.generate_bpag_file("./../data/bobaseq_1")

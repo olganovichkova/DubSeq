@@ -23,13 +23,14 @@ def parse_args():
 
     parser = argparse.ArgumentParser(
         description='''
-        The is a tool to simplify parsing user input commands with Python Arguments Parser.
+        The is a tool to check or optimize a gff file to be used by the dubseq/bobaseq modules.
 
-        Examples to run the bpag program:
+        Examples to run the gffutil tool:
 
-        python -m dubseq.gffutil -p /path/to/bpseq.tsv 
-               -u  /path/to/bagseq_up.tsv  -d /path/to/bagseq_dn.tsv
-               -o /output/dir                                    
+        python -m dubseq.gffutil -i /path/to/gff_file 
+               -o  /path/to/output_gff_file  
+               --optimize
+               --check                                   
         ''',
         formatter_class=util.RawDescriptionArgumentDefaultsHelpFormatter)
 
@@ -77,6 +78,8 @@ def check_args(args):
     if not args.check_gff and not args.optimize_gff:
         print('ERROR: To run, please add either the "--optimize" argument or the "--check" argument.')
         return False
+
+    return True
             
 
 def main():
@@ -118,14 +121,11 @@ def check_gff():
 
     if has_empty_line == False and has_gene_feature == True:
         print('The gff file looks valid for processing by dubseq/bobaseq modules')
-
-
-
-
-
-    
+   
 
 def optimize_gff():
+    #gene_uid is a unique identifies in the case if ID is not in the attributes
+    gene_uid = 0
     
     with open(Context.gff_fname_out, 'w') as f_out:    
         with open(Context.gff_fname_in, 'r') as f_in:
@@ -158,6 +158,9 @@ def optimize_gff():
                     key, val = attr_val.split('=')
                     atr_vals[key] = val
 
+                if 'ID' not in atr_vals:
+                    gene_uid += 1
+                    atr_vals['ID'] =f'gene-{gene_uid}'
 
                 # generate GENE line
                 gene_id = 'gene-' + atr_vals['ID']
@@ -178,4 +181,3 @@ if __name__ == "__main__":
     if check_args(args):
         Context.build_context(args)
         main()
-    
